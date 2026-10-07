@@ -1,0 +1,112 @@
+name: Continuous Integration & Release Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-quality-and-tests:
+    name: Backend Lint, Type Check & Pytest
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: autosar_assistant
+          POSTGRES_USER: autosar
+          POSTGRES_PASSWORD: development-only-change-me
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install ruff mypy pytest httpx
+
+      - name: Check Formatting with Ruff
+        run: ruff format --check backend worker tests
+
+      - name: Lint with Ruff
+        run: ruff check backend worker tests
+
+      - name: Type Check with Mypy
+        run: |
+          mypy --config-file backend/pyproject.toml backend/app
+          mypy worker/app
+
+      - name: Database Migration Check
+        env:
+          DATABASE_URL: postgresql://autosar:development-only-change-me@localhost:5432/autosar_assistant
+        run: |
+          cd backend
+          alembic upgrade head
+
+      - name: Run Backend Pytest Suite
+        env:
+          DATABASE_URL: postgresql://autosar:development-only-change-me@localhost:5432/autosar_assistant
+          LLM_PROVIDER: fake
+          EMBEDDING_PROVIDER: fake
+        run: |
+          pytest -v
+
+  frontend-quality-and-tests:
+    name: Frontend Lint, Type Check & Vitest
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci || npm install
+
+      - name: Run Frontend Vitest Suite
+        run: |
+          cd frontend
+          npm run test
+
+      - name: Verify Frontend Production Build
+        run: |
+          cd frontend
+          npm run build
+
+  docker-build-verification:
+    name: Docker Build Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Compose Stack
+        run: |
+          docker compose build
+
