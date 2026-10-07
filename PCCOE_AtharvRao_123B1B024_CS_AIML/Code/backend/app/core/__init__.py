@@ -1,1 +1,0 @@
-"""Cross-cutting backend foundations."""
