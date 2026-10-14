@@ -33,6 +33,20 @@ class ApplicationError(Exception):
         super().__init__(message)
 
 
+class NotFoundError(ApplicationError):
+    """The requested resource does not exist in the caller's project."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(code, message, status.HTTP_404_NOT_FOUND)
+
+
+class ConflictError(ApplicationError):
+    """The request is valid but clashes with the current state (already reviewed, duplicate)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(code, message, status.HTTP_409_CONFLICT)
+
+
 def install_exception_handlers(application: FastAPI) -> None:
     """Install centralized handlers, keeping endpoint modules free of error plumbing."""
 
@@ -54,7 +68,7 @@ def install_exception_handlers(application: FastAPI) -> None:
     ) -> JSONResponse:
         metrics.increment("error_category_REQUEST_VALIDATION_ERROR")
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,  # Unprocessable Content (the constant's name changed between versions)
             content=ErrorResponse(
                 code="REQUEST_VALIDATION_ERROR",
                 message="The request payload is invalid.",

@@ -1,0 +1,26 @@
+flowchart TD
+    subgraph BUILD["1. Ingestion and knowledge construction (explicit, re-runnable build)"]
+        A["Upload queue<br/>one document at a time"] --> B["Validate + SHA-256 + managed storage"]
+        B --> C["DOCUMENT_INGESTION<br/>parse, section tree, structure-aware chunks (OCR if needed)"]
+        C --> D["EMBEDDING<br/>breadcrumb + content > pgvector (768D)"]
+        D --> E["GRAPH_EXTRACTION<br/>candidate entities + staged relationships (LLM, validated)"]
+        E --> F["ENTITY_RESOLUTION<br/>blocking > guards > rules > LLM for ambiguous > Union-Find"]
+        F --> G["GRAPH_BUILD<br/>bind relationships, validate, confidence, findings"]
+    end
+    G --> H["Candidate graph facts + provenance<br/>(all PENDING)"]
+    H --> I["Human review: Verify / Edit / Reject<br/>original kept, audit history"]
+    subgraph ASK["2. Query"]
+        Q["Question"] --> P["Planner<br/>entity linking, intent, direction, depth"]
+        P --> V["Dense + lexical retrieval<br/>(RRF, relevance gate)"]
+        P --> T["Bounded graph traversal<br/>(PostgreSQL recursive CTE)"]
+        V --> X["Evidence bundle"]
+        T --> X
+        X --> S{"Sufficient?"}
+        S -- "no, rounds left" --> P
+        S -- "no, limit reached" --> R["Insufficient evidence"]
+        S -- "yes" --> L["LLM drafts claims"]
+        L --> Z["Claim verification against cited text<br/>unsupported claims dropped"]
+    end
+    I --> T
+    Z --> O["Grounded answer + citations + graph facts + limitations"]
+    I --> M["3. Analysis<br/>Impact analysis | Findings | Revision comparison | Export"]

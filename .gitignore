@@ -19,3 +19,10 @@ build/
 
 coverage/
 .DS_Store
+
+# Archives and uploaded source files must never be committed (a committed .env inside an archive
+# leaked provider credentials once already).
+*.zip
+**/data/sources/*.source
+backend/.env
+.env.local

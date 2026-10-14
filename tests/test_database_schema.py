@@ -21,6 +21,11 @@ EXPECTED_TABLES = {
     "jobs",
     "comparisons",
     "comparison_findings",
+    "ocr_cache",
+    "relationship_candidates",
+    "entity_merges",
+    "merge_decisions",
+    "findings",
 }
 
 

@@ -1,10 +1,12 @@
 """Record the successful candidate-extraction state of each chunk.
 
-This revision restores the migration source corresponding to an already-deployed
-database revision.  It is intentionally additive and safe for fresh databases.
-"""
+Idempotent on purpose: databases that were created by the historical ``create_all`` based revision
+0001 already contain this column.
 
-import sqlalchemy as sa
+Revision ID: 20260909_0006
+Revises: 20260908_0005
+Create Date: 2026-09-09
+"""
 
 from alembic import op
 
@@ -15,8 +17,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("chunks", sa.Column("extracted_at", sa.DateTime(timezone=True), nullable=True))
+    op.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS extracted_at TIMESTAMP WITH TIME ZONE")
 
 
 def downgrade() -> None:
-    op.drop_column("chunks", "extracted_at")
+    op.execute("ALTER TABLE chunks DROP COLUMN IF EXISTS extracted_at")

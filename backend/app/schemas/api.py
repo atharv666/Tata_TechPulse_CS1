@@ -1,12 +1,14 @@
 """Public typed HTTP contracts for the MVP resource and workflow endpoints."""
 
+from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from app.models.enums import MembershipRole
+from app.schemas.graph import EntityNode, RelationshipEdge
 
 
 class Page(BaseModel):
@@ -64,27 +66,15 @@ class JobResponse(BaseModel):
     job_type: str
     state: str
     details: dict[str, object]
+    created_at: datetime | None = None
 
 
-class EntityResponse(BaseModel):
-    id: UUID
-    canonical_name: str
-    entity_type: str
-    confidence: Decimal
-    extraction_type: str
-    validation_state: str
-    trust_state: str
+class EntityResponse(EntityNode):
+    """List/review view of an entity; ``status_text`` always pairs confidence with its status."""
 
 
-class RelationshipResponse(BaseModel):
-    id: UUID
-    source_entity_id: UUID
-    target_entity_id: UUID
-    relationship_type: str
-    confidence: Decimal
-    extraction_type: str
-    validation_state: str
-    trust_state: str
+class RelationshipResponse(RelationshipEdge):
+    """List/review view of a relationship."""
 
 
 class ReviewDecision(BaseModel):
@@ -105,9 +95,13 @@ class RelationshipCorrection(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    query: str = Field(min_length=1)
+    query: str = Field(min_length=1, max_length=4000)
     document_version_id: UUID | None = None
-    top_k: int = Field(default=8, ge=1, le=50)
+    #: ``None`` uses the configured default (``RAG_DEFAULT_TOP_K``).
+    top_k: int | None = Field(default=None, ge=1, le=50)
+    #: SOURCE = retrieval-augmented answer from document text only. HYBRID/GRAPH add graph facts
+    #: (available once the graph layer is attached); the mode actually used is echoed back.
+    mode: Literal["HYBRID", "GRAPH", "SOURCE"] = "HYBRID"
 
 
 class ImpactRequest(BaseModel):
@@ -123,10 +117,26 @@ class ComparisonRequest(BaseModel):
     target_version_id: UUID
 
 
+class ComparisonResponse(BaseModel):
+    id: UUID
+    base_version_id: UUID
+    target_version_id: UUID
+    state: str
+    requested_by: str
+    created_at: datetime | None = None
+
+
+class ComparisonDetail(ComparisonResponse):
+    finding_count: int
+    #: Findings per classification (ADDED, REMOVED, MODIFIED, TARGET_CHANGED, ...).
+    summary: dict[str, int]
+
+
 class ComparisonFindingResponse(BaseModel):
     id: UUID
     comparison_id: UUID
     entity_id: UUID | None
     finding_type: str
+    confidence: Decimal
     summary: str
     details: dict[str, Any]

@@ -1,65 +1,84 @@
-"""Explicit graph build execution script for the demo project."""
+"""Queue an explicit knowledge-graph (re)build for a project, optionally running it here.
 
-from uuid import uuid4
+    python scripts/build_graph.py                       # demo project, queue only
+    python scripts/build_graph.py --project NAME --run-worker
 
-from app.db.session import DatabaseConfigurationError, get_session_factory
-from app.graph.build import GraphBuildService
-from app.models.enums import JobState
-from app.models.schema import Job, Project
-from sqlalchemy.exc import SQLAlchemyError
+A build resolves duplicate entity names, binds extracted relationship statements to canonical
+entities, validates facts and refreshes the findings. It is idempotent and never changes a
+human-reviewed fact. Asking a question never triggers it.
+"""
 
-DEMO_PROJECT_NAME = "AUTOSAR_Demo_Project"
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend"))
+
+DEFAULT_PROJECT = "AUTOSAR_Demo_Project"
 
 
-def run_graph_build() -> dict[str, object]:
-    try:
-        session = get_session_factory()()
-    except (DatabaseConfigurationError, SQLAlchemyError):
-        print("DATABASE_URL not set; running graph build in offline test mode.")
-        return {"status": "SUCCESS", "graph_build_id": str(uuid4())}
+def run_graph_build(
+    project_name: str = DEFAULT_PROJECT, run_worker: bool = False
+) -> dict[str, object]:
+    from app.api.dependencies import CurrentUser, ProjectAccess
+    from app.core.config import get_settings
+    from app.db.session import get_session_factory
+    from app.jobs.orchestration import JobRunner
+    from app.jobs.pipeline import PipelineHandlers
+    from app.models.enums import MembershipRole
+    from app.models.schema import Job, Project
+    from app.services.api import MvpApiService
+    from sqlalchemy import select
 
-    try:
-        project = session.query(Project).filter_by(name=DEMO_PROJECT_NAME).first()
-        if not project:
-            print(
-                f"Error: Project '{DEMO_PROJECT_NAME}' not found. Run seed_demo_data.py first."
+    factory = get_session_factory()
+    with factory() as session:
+        project = session.scalar(select(Project).where(Project.name == project_name))
+        if project is None:
+            raise LookupError(
+                f"Project '{project_name}' does not exist (run seed_demo_data.py?)."
             )
-            return {}
-
-        job = Job(
-            id=uuid4(),
-            project_id=project.id,
-            job_type="GRAPH_BUILD",
-            state=JobState.PENDING,
-            requested_by="engineering-user",
-            details={"initiated_by": "build_graph_script"},
-        )
-        session.add(job)
+        access = ProjectAccess(project.id, "engineering-user", MembershipRole.ADMIN)
+        job = MvpApiService(session, CurrentUser(access.user_id)).graph_build(access)
         session.commit()
-
-        service = GraphBuildService()
-        result = service.build(
-            session, project.id, actor_id="engineering-user", job=job
+        job_id = job.id
+    if run_worker:
+        runner = JobRunner(
+            factory,
+            PipelineHandlers(get_settings()).handlers(),
+            worker_id="build-script",
         )
-
-        session.refresh(job)
-        print(f"Graph build job {job.id} state: {job.state}")
-        print(f"Details: {job.details}")
+        while runner.run_once() is not None:
+            pass
+    with factory() as session:
+        finished = session.get(Job, job_id)
+        details = dict(finished.details) if finished is not None else {}
         return {
-            "job_id": str(result.job_id),
-            "validated_entities": result.validated_entities,
-            "validated_relationships": result.validated_relationships,
-            "rejected_entities": result.rejected_entities,
-            "rejected_relationships": result.rejected_relationships,
+            "job_id": str(job_id),
+            "state": finished.state.value if finished is not None else "UNKNOWN",
+            "resolution": details.get("resolution"),
+            "build": details.get("build"),
         }
 
-    except SQLAlchemyError:
-        session.rollback()
-        print("DATABASE_URL is unavailable; running graph build in offline test mode.")
-        return {"status": "SUCCESS", "graph_build_id": str(uuid4())}
-    finally:
-        session.close()
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument("--project", default=DEFAULT_PROJECT)
+    parser.add_argument("--run-worker", action="store_true")
+    args = parser.parse_args()
+    try:
+        outcome = run_graph_build(args.project, args.run_worker)
+    except Exception as error:
+        print(f"Graph build failed: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    for key, value in outcome.items():
+        print(f"{key}: {value}")
+    return 0
 
 
 if __name__ == "__main__":
-    run_graph_build()
+    raise SystemExit(main())

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.models.schema import Chunk, Document, DocumentVersion, Section
 from app.repositories.base import ProjectScopedRepository
@@ -29,19 +29,53 @@ class VectorSearchHit:
 class VectorRepository(ProjectScopedRepository):
     """All operations are scoped to exactly one project at construction time."""
 
-    def pending_chunks(self, model: str, model_version: str, limit: int) -> list[Chunk]:
-        statement = (
-            select(Chunk)
+    def pending_chunks(
+        self,
+        model: str,
+        model_version: str,
+        limit: int,
+        *,
+        document_version_id: UUID | None = None,
+        after_id: UUID | None = None,
+    ) -> list[Chunk]:
+        """Chunks lacking a vector of the requested identity, in a stable keyset order.
+
+        ``after_id`` makes the scan strictly advance, so callers terminate even if a store fails
+        to change the predicate. ``IS DISTINCT FROM`` treats a NULL identity as "different"
+        (plain ``!=`` yields NULL and silently skipped vectors with no recorded model).
+        """
+        statement = select(Chunk).where(
+            Chunk.project_id == self.project_id,
+            or_(
+                Chunk.embedding.is_(None),
+                Chunk.embedding_model.is_distinct_from(model),
+                Chunk.embedding_model_version.is_distinct_from(model_version),
+            ),
+        )
+        if document_version_id is not None:
+            statement = statement.where(Chunk.document_version_id == document_version_id)
+        if after_id is not None:
+            statement = statement.where(Chunk.id > after_id)
+        return list(self.session.scalars(statement.order_by(Chunk.id).limit(limit)))
+
+    def reusable_embeddings(
+        self, content_hashes: list[str], model: str, model_version: str
+    ) -> dict[str, list[float]]:
+        """Existing vectors for identical embedding text (same project, model and version)."""
+        if not content_hashes:
+            return {}
+        rows = self.session.execute(
+            select(Chunk.content_hash, Chunk.embedding)
             .where(
                 Chunk.project_id == self.project_id,
-                (Chunk.embedding.is_(None))
-                | (Chunk.embedding_model != model)
-                | (Chunk.embedding_model_version != model_version),
+                Chunk.content_hash.in_(content_hashes),
+                Chunk.embedding.is_not(None),
+                Chunk.embedding_model == model,
+                Chunk.embedding_model_version == model_version,
             )
-            .order_by(Chunk.created_at, Chunk.id)
-            .limit(limit)
-        )
-        return list(self.session.scalars(statement))
+            .distinct(Chunk.content_hash)
+        ).all()
+        return {str(row[0]): [float(v) for v in row[1]] for row in rows if row[0] is not None}
 
     def store_embedding(
         self, chunk: Chunk, vector: list[float], model: str, model_version: str

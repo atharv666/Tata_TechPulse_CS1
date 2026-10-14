@@ -1,14 +1,15 @@
-import type { Entity, Relationship } from "../types/api";
+import { statusText } from "../lib/format";
+import { tone, toneLabel } from "../lib/graphView";
+import type { FactStatus } from "../types/api";
 
-type Fact = Pick<Entity | Relationship, "validation_state" | "extraction_type" | "confidence">;
+/** Back-compatible name for the colour of a fact (see ``lib/graphView``). */
+export const statusTone = tone;
 
-export function statusTone(fact: Fact): "green" | "blue" | "orange" | "red" {
-  if (fact.validation_state === "REJECTED") return "red";
-  if (fact.validation_state === "HUMAN_VERIFIED") return "green";
-  if (fact.extraction_type === "INFERRED" || fact.confidence < 0.7) return "orange";
-  return "blue";
-}
-
-export function StatusBadge({ fact }: { fact: Fact }) {
-  return <span className={`status status-${statusTone(fact)}`}>{fact.validation_state} · {fact.extraction_type} · {Math.round(fact.confidence * 100)}%</span>;
+export function StatusBadge({ fact }: { fact: FactStatus }) {
+  const current = tone(fact);
+  return (
+    <span className={`status status-${current}`} title={toneLabel(current)}>
+      {statusText(fact)}
+    </span>
+  );
 }

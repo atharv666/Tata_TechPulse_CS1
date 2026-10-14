@@ -1,20 +1,6 @@
-"""Source-evidence retrieval boundaries."""
+"""Question answering over project knowledge.
 
-from app.retrieval.evidence import EvidenceAssemblyService, GroundedAnswerService
-from app.retrieval.graph import GraphTraversalService
-from app.retrieval.impact import ImpactAnalysisService
-from app.retrieval.planning import QueryPlanner
-from app.retrieval.revision import ComparisonJobService, RevisionComparisonService
-from app.retrieval.vector import EmbeddingService, VectorRetrievalService
-
-__all__ = [
-    "EmbeddingService",
-    "EvidenceAssemblyService",
-    "GraphTraversalService",
-    "ImpactAnalysisService",
-    "GroundedAnswerService",
-    "QueryPlanner",
-    "ComparisonJobService",
-    "RevisionComparisonService",
-    "VectorRetrievalService",
-]
+Passage retrieval (dense + lexical), answer generation and verification live here; graph
+retrieval lives in ``app.graph``. Modules are imported where they are used, so importing this
+package stays cheap and free of import cycles.
+"""

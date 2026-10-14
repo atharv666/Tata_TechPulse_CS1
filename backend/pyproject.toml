@@ -51,10 +51,11 @@ select = ["E", "F", "I", "UP", "B"]
 "app/api/**/*.py" = ["B008"]
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12: numpy>=2.5 stubs (imported by pgvector) use 3.12 syntax; ruff still enforces py311 syntax.
+python_version = "3.12"
 strict = true
 files = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["fitz", "openpyxl"]
+module = ["fitz", "openpyxl", "openpyxl.*"]
 ignore_missing_imports = true

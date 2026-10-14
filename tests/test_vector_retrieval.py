@@ -25,14 +25,37 @@ class InMemoryVectorRepository:
     def __post_init__(self) -> None:
         self.searches = []
 
-    def pending_chunks(self, model: str, model_version: str, limit: int) -> list[Chunk]:
-        return [
+    def pending_chunks(
+        self,
+        model: str,
+        model_version: str,
+        limit: int,
+        *,
+        document_version_id: object = None,
+        after_id: object = None,
+    ) -> list[Chunk]:
+        pending = [
             chunk
-            for chunk in self.chunks
+            for chunk in sorted(self.chunks, key=lambda item: item.id)
             if chunk.embedding is None
             or chunk.embedding_model != model
             or chunk.embedding_model_version != model_version
-        ][:limit]
+        ]
+        if after_id is not None:
+            pending = [chunk for chunk in pending if chunk.id > after_id]  # type: ignore[operator]
+        return pending[:limit]
+
+    def reusable_embeddings(
+        self, content_hashes: list[str], model: str, model_version: str
+    ) -> dict[str, list[float]]:
+        return {
+            chunk.content_hash: list(chunk.embedding)
+            for chunk in self.chunks
+            if chunk.content_hash in content_hashes
+            and chunk.embedding is not None
+            and chunk.embedding_model == model
+            and chunk.embedding_model_version == model_version
+        }
 
     def store_embedding(
         self, chunk: Chunk, vector: list[float], model: str, model_version: str
@@ -81,6 +104,50 @@ def test_batch_indexing_persists_model_identity_and_processes_multiple_batches()
         and chunk.embedding_model_version == "v1"
         for chunk in repository.chunks
     )
+
+
+class NeverUpdatesRepository(InMemoryVectorRepository):
+    """Simulates a store whose writes are not visible to the next 'pending' query."""
+
+    def pending_chunks(self, *args: object, **kwargs: object) -> list[Chunk]:
+        return super().pending_chunks(*args, **kwargs)  # type: ignore[arg-type]
+
+    def store_embedding(
+        self, chunk: Chunk, vector: list[float], model: str, model_version: str
+    ) -> None:
+        self.stored = (
+            getattr(self, "stored", 0) + 1
+        )  # deliberately does NOT touch the chunk
+
+
+def test_indexing_terminates_even_if_stored_vectors_are_not_visible_to_the_next_query() -> (
+    None
+):
+    """Regression: with autoflush off the old 're-select pending' loop never ended (unbounded calls)."""
+    provider = FakeEmbeddingProvider(3)
+    repository = NeverUpdatesRepository([make_chunk(str(index)) for index in range(7)])
+    service = EmbeddingService(provider, settings())
+
+    result = run(service.index_pending(repository, batch_size=3))
+
+    assert result.indexed_count == 7  # type: ignore[union-attr]
+    assert [len(request) for request in provider.requests] == [3, 3, 1]
+
+
+def test_after_batch_callback_reports_cumulative_progress() -> None:
+    repository = InMemoryVectorRepository(
+        [make_chunk(str(index)) for index in range(5)]
+    )
+    progress: list[tuple[int, int]] = []
+    service = EmbeddingService(FakeEmbeddingProvider(3), settings())
+
+    run(
+        service.index_pending(
+            repository, batch_size=2, after_batch=lambda t, n: progress.append((t, n))
+        )
+    )
+
+    assert progress == [(2, 2), (4, 2), (5, 1)]
 
 
 def test_query_retrieval_passes_model_version_top_k_and_version_filter() -> None:
@@ -156,3 +223,37 @@ def test_vector_repository_search_statement_always_includes_project_boundary() -
     assert repository.search([0.0, 0.0, 0.0], "fake-embedding", "v1", top_k=2) == []
     assert session.statement is not None
     assert "chunks.project_id" in str(session.statement)
+
+
+def test_identical_text_reuses_an_existing_vector_instead_of_calling_the_provider() -> (
+    None
+):
+    provider = FakeEmbeddingProvider(3, lambda text: [float(len(text)), 0.0, 1.0])
+    done = make_chunk("unchanged section")
+    done.content_hash = "h-unchanged"
+    done.embedding = [9.0, 9.0, 9.0]
+    done.embedding_model, done.embedding_model_version = "fake-embedding", "v1"
+    same = make_chunk("unchanged section")  # e.g. the same section in a new revision
+    same.content_hash = "h-unchanged"
+    new = make_chunk("brand new section")
+    new.content_hash = "h-new"
+    repository = InMemoryVectorRepository([done, same, new])
+    service = EmbeddingService(provider, settings())
+
+    result = run(service.index_pending(repository))
+
+    assert result.indexed_count == 2 and result.reused_count == 1  # type: ignore[union-attr]
+    assert provider.requests == [["brand new section"]]  # one provider call, one text
+    assert same.embedding == [9.0, 9.0, 9.0] and new.embedding is not None
+
+
+def test_duplicate_text_inside_one_batch_is_embedded_once() -> None:
+    provider = FakeEmbeddingProvider(3)
+    first, second = make_chunk("repeated"), make_chunk("repeated")
+    first.content_hash = second.content_hash = "h-repeat"
+    repository = InMemoryVectorRepository([first, second])
+
+    run(EmbeddingService(provider, settings()).index_pending(repository))
+
+    assert provider.requests == [["repeated"]]
+    assert first.embedding == second.embedding

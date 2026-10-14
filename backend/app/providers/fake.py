@@ -12,6 +12,33 @@ from app.providers.contracts import (
     StructuredModel,
 )
 
+#: Test seams. ``LLM_PROVIDER=fake`` / ``EMBEDDING_PROVIDER=fake`` is the only way to reach
+#: these, so production configuration can never select a scripted provider by accident.
+_llm_factory: Callable[[], LLMProvider] | None = None
+_embedding_factory: Callable[[int], EmbeddingProvider] | None = None
+
+
+def register_fake_llm(factory: Callable[[], LLMProvider] | None) -> None:
+    """Install (or clear, with ``None``) the object returned when ``LLM_PROVIDER=fake``."""
+    global _llm_factory
+    _llm_factory = factory
+
+
+def register_fake_embedding(factory: Callable[[int], EmbeddingProvider] | None) -> None:
+    """Install (or clear) the factory that receives the configured embedding dimension."""
+    global _embedding_factory
+    _embedding_factory = factory
+
+
+def create_fake_llm() -> LLMProvider:
+    return _llm_factory() if _llm_factory is not None else FakeLLMProvider(payload={})
+
+
+def create_fake_embedding(dimensions: int) -> EmbeddingProvider:
+    if _embedding_factory is not None:
+        return _embedding_factory(dimensions)
+    return FakeEmbeddingProvider(dimensions=dimensions)
+
 
 class FakeLLMProvider(LLMProvider):
     def __init__(self, payload: dict[str, Any], model: str = "fake-llm") -> None:

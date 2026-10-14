@@ -11,13 +11,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import CurrentUser, ProjectAccess
-from app.canonicalization.core import EntityCandidate
 from app.core.config import get_settings
-from app.core.errors import ApplicationError
+from app.core.errors import ApplicationError, NotFoundError
 from app.ingestion.contracts import IngestionError
 from app.ingestion.validation import validate_upload
 from app.jobs.source_store import SourceStore
-from app.models.enums import MembershipRole
+from app.models.enums import ComparisonState, MembershipRole
 from app.models.schema import (
     AuditEvent,
     Comparison,
@@ -35,19 +34,10 @@ from app.repositories.comparisons import ComparisonRepository
 from app.repositories.jobs import JobRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.review import ReviewRepository
-from app.repositories.vectors import VectorRepository
-from app.retrieval.evidence import (
-    Citation,
-    EvidenceAssemblyService,
-    GraphFactEvidence,
-    GroundedAnswerService,
-)
-from app.retrieval.graph import GraphTraversalService
-from app.retrieval.hybrid import HybridRetrievalService
-from app.retrieval.impact import ImpactAnalysisService, ImpactSourceEvidence
-from app.retrieval.planning import QueryPlanner
-from app.retrieval.revision import RevisionEvidence, RevisionSnapshot
-from app.retrieval.vector import EmbeddingService, VectorRetrievalService
+from app.retrieval.answer import RagPipeline
+from app.retrieval.evidence import GroundedAnswer
+from app.retrieval.impact import ImpactAnalysisResult, ImpactAnalysisService
+from app.retrieval.vector import EmbeddingService
 from app.schemas.api import (
     ComparisonRequest,
     DocumentUploadRequest,
@@ -56,6 +46,8 @@ from app.schemas.api import (
     ProjectCreate,
     QueryRequest,
 )
+from app.services.findings import FindingsService
+from app.services.knowledge import KnowledgeService
 from app.services.review import ReviewActor, ReviewService
 
 
@@ -63,6 +55,10 @@ class MvpApiService:
     def __init__(self, session: Session, user: CurrentUser) -> None:
         self._session = session
         self._user = user
+
+    @property
+    def session(self) -> Session:
+        return self._session
 
     def create_project(self, request: ProjectCreate) -> Project:
         project = Project(name=request.name, description=request.description)
@@ -94,6 +90,19 @@ class MvpApiService:
         )
         ProjectRepository(self._session).add_member(member)
         return member
+
+    def members(
+        self, access: ProjectAccess, offset: int, limit: int
+    ) -> tuple[list[ProjectMember], int]:
+        self._require_admin(access)
+        statement = (
+            select(ProjectMember)
+            .where(ProjectMember.project_id == access.project_id)
+            .order_by(ProjectMember.user_id)
+        )
+        return list(self._session.scalars(statement.offset(offset).limit(limit))), self._count(
+            statement
+        )
 
     def upload_document(self, access: ProjectAccess, request: DocumentUploadRequest) -> Job:
         try:
@@ -175,28 +184,30 @@ class MvpApiService:
             statement
         )
 
-    def entities(self, access: ProjectAccess, offset: int, limit: int) -> tuple[list[Entity], int]:
-        statement = (
-            select(Entity)
-            .where(Entity.project_id == access.project_id)
-            .order_by(Entity.canonical_name)
-        )
-        return list(self._session.scalars(statement.offset(offset).limit(limit))), self._count(
-            statement
-        )
+    def knowledge(self, access: ProjectAccess) -> KnowledgeService:
+        return KnowledgeService(self._session, access)
+
+    def findings(self, access: ProjectAccess) -> FindingsService:
+        return FindingsService(self._session, access.project_id, access.user_id)
+
+    def entities(
+        self, access: ProjectAccess, offset: int, limit: int, **filters: Any
+    ) -> tuple[list[Entity], int]:
+        return self.knowledge(access).entities(offset, limit, **filters)
 
     def relationships(
-        self, access: ProjectAccess, offset: int, limit: int
+        self, access: ProjectAccess, offset: int, limit: int, **filters: Any
     ) -> tuple[list[Relationship], int]:
-        statement = select(Relationship).where(Relationship.project_id == access.project_id)
-        return list(self._session.scalars(statement.offset(offset).limit(limit))), self._count(
-            statement
-        )
+        return self.knowledge(access).relationships(offset, limit, **filters)
 
     def graph_build(self, access: ProjectAccess) -> Job:
         self._require_engineer(access)
         return JobRepository(self._session).enqueue(
-            access.project_id, "GRAPH_BUILD", access.user_id, {}, f"graph-build:{access.project_id}"
+            access.project_id,
+            "GRAPH_BUILD",
+            access.user_id,
+            {"resolve": True},
+            f"graph-build:{access.project_id}:manual",
         )
 
     def reembed(self, access: ProjectAccess) -> Job:
@@ -216,107 +227,32 @@ class MvpApiService:
             ReviewActor(access.user_id, access.project_id, access.role),
         )
 
-    async def query(self, access: ProjectAccess, request: QueryRequest) -> object:
-        entities = list(
-            self._session.scalars(select(Entity).where(Entity.project_id == access.project_id))
-        )
-        candidates = [
-            EntityCandidate(entity.id, entity.project_id, entity.canonical_name, entity.entity_type)
-            for entity in entities
-        ]
-        plan = QueryPlanner().plan(
-            request.query, access.project_id, candidates, request.document_version_id
-        )
-        relationships = list(
-            self._session.scalars(
-                select(Relationship).where(Relationship.project_id == access.project_id)
-            )
-        )
+    async def query(self, access: ProjectAccess, request: QueryRequest) -> GroundedAnswer:
+        """Answer a question from the project's documents. Read-only: it never mutates the graph."""
         settings = get_settings()
         embeddings = EmbeddingService(
             create_embedding_provider(settings.embedding_settings()), settings.embedding_settings()
         )
-        hybrid = await HybridRetrievalService(
-            VectorRetrievalService(embeddings), GraphTraversalService()
-        ).retrieve(
-            plan, VectorRepository(self._session, access.project_id), relationships, request.top_k
-        )
-        names = {entity.id: entity.canonical_name for entity in entities}
-        review_repository = ReviewRepository(self._session, access.project_id)
-        graph_facts: list[GraphFactEvidence] = []
-        citations: list[Citation] = []
-        if hybrid.graph is not None:
-            for relationship in hybrid.graph.relationships:
-                fact_citations = self._citations(
-                    review_repository.relationship_provenance(relationship.id)
-                )
-                citations.extend(fact_citations)
-                graph_facts.append(
-                    GraphFactEvidence(
-                        fact_id=str(relationship.id),
-                        source_entity=names.get(
-                            relationship.source_entity_id, str(relationship.source_entity_id)
-                        ),
-                        relationship_type=relationship.relationship_type,
-                        target_entity=names.get(
-                            relationship.target_entity_id, str(relationship.target_entity_id)
-                        ),
-                        confidence=float(relationship.confidence),
-                        extraction_type=relationship.extraction_type,
-                        validation_state=relationship.validation_state,
-                        citation_ids=[citation.citation_id for citation in fact_citations],
-                    )
-                )
-        bundle = EvidenceAssemblyService().assemble(
+        pipeline = RagPipeline(
+            self._session,
             access.project_id,
+            embeddings,
+            create_llm_provider(settings.llm_settings()),
+            settings,
+        )
+        versions = [request.document_version_id] if request.document_version_id else None
+        outcome = await pipeline.answer(
             request.query,
-            list(hybrid.vector_hits),
-            graph_facts,
-            request.document_version_id,
-            citations,
+            document_version_ids=versions,
+            top_k=request.top_k,
+            mode=request.mode,
         )
-        return await GroundedAnswerService(create_llm_provider(settings.llm_settings())).answer(
-            bundle
-        )
+        return outcome.answer
 
-    def impact(self, access: ProjectAccess, request: ImpactRequest) -> object:
-        entities = list(
-            self._session.scalars(select(Entity).where(Entity.project_id == access.project_id))
-        )
-        relationships = list(
-            self._session.scalars(
-                select(Relationship).where(Relationship.project_id == access.project_id)
-            )
-        )
-        names = {entity.id: entity.canonical_name for entity in entities}
-        review_repository = ReviewRepository(self._session, access.project_id)
-        evidence: dict[UUID, ImpactSourceEvidence] = {}
-        for relationship in relationships:
-            citations = self._citations(review_repository.relationship_provenance(relationship.id))
-            if citations:
-                evidence[relationship.id] = ImpactSourceEvidence(
-                    fact=GraphFactEvidence(
-                        fact_id=str(relationship.id),
-                        source_entity=names.get(
-                            relationship.source_entity_id, str(relationship.source_entity_id)
-                        ),
-                        relationship_type=relationship.relationship_type,
-                        target_entity=names.get(
-                            relationship.target_entity_id, str(relationship.target_entity_id)
-                        ),
-                        confidence=float(relationship.confidence),
-                        extraction_type=relationship.extraction_type,
-                        validation_state=relationship.validation_state,
-                        citation_ids=[citation.citation_id for citation in citations],
-                    ),
-                    citations=citations,
-                )
-        return ImpactAnalysisService().analyze(
-            access.project_id,
+    def impact(self, access: ProjectAccess, request: ImpactRequest) -> ImpactAnalysisResult:
+        """Potentially affected elements for a change to one entity (read-only, bounded)."""
+        return ImpactAnalysisService(self._session, access.project_id).analyze(
             request.root_entity_id,
-            entities,
-            relationships,
-            evidence,
             request.document_version_id,
             request.depth,
             request.node_limit,
@@ -326,32 +262,83 @@ class MvpApiService:
     def comparison(
         self, access: ProjectAccess, request: ComparisonRequest
     ) -> tuple[Comparison, Job]:
+        """Queue a comparison of two document versions (the worker computes the findings)."""
         self._require_engineer(access)
+        if request.base_version_id == request.target_version_id:
+            raise ValueError("Comparison requires two distinct document versions.")
         repository = ComparisonRepository(self._session, access.project_id)
         repository.require_version(request.base_version_id)
         repository.require_version(request.target_version_id)
+        comparison = Comparison(
+            project_id=access.project_id,
+            base_version_id=request.base_version_id,
+            target_version_id=request.target_version_id,
+            requested_by=access.user_id,
+            state=ComparisonState.PENDING,
+        )
+        repository.add_comparison(comparison)
+        self._session.flush()
         job = JobRepository(self._session).enqueue(
             access.project_id,
             "REVISION_COMPARISON",
             access.user_id,
             {
+                "comparison_id": str(comparison.id),
                 "base_version_id": str(request.base_version_id),
                 "target_version_id": str(request.target_version_id),
             },
-            f"comparison:{request.base_version_id}:{request.target_version_id}",
+            f"comparison:{comparison.id}",
         )
-        return Comparison(), job
+        return comparison, job
+
+    def comparisons(
+        self, access: ProjectAccess, offset: int, limit: int
+    ) -> tuple[list[Comparison], int]:
+        statement = (
+            select(Comparison)
+            .where(Comparison.project_id == access.project_id)
+            .order_by(Comparison.created_at.desc(), Comparison.id)
+        )
+        return list(self._session.scalars(statement.offset(offset).limit(limit))), self._count(
+            statement
+        )
+
+    def get_comparison(
+        self, access: ProjectAccess, comparison_id: UUID
+    ) -> tuple[Comparison, dict[str, int]]:
+        comparison = self._session.scalar(
+            select(Comparison).where(
+                Comparison.project_id == access.project_id, Comparison.id == comparison_id
+            )
+        )
+        if comparison is None:
+            raise NotFoundError("COMPARISON_NOT_FOUND", "Comparison was not found in this project.")
+        rows = self._session.execute(
+            select(ComparisonFinding.finding_type, func.count(ComparisonFinding.id))
+            .where(ComparisonFinding.comparison_id == comparison.id)
+            .group_by(ComparisonFinding.finding_type)
+        )
+        return comparison, {kind: int(total) for kind, total in rows}
 
     def comparison_findings(
-        self, access: ProjectAccess, comparison_id: UUID, offset: int, limit: int
+        self,
+        access: ProjectAccess,
+        comparison_id: UUID,
+        offset: int,
+        limit: int,
+        classification: str | None = None,
     ) -> tuple[list[ComparisonFinding], int]:
+        self.get_comparison(access, comparison_id)  # 404 for a comparison of another project
+        conditions = [
+            ComparisonFinding.project_id == access.project_id,
+            ComparisonFinding.comparison_id == comparison_id,
+        ]
+        if classification:
+            conditions.append(ComparisonFinding.finding_type == classification)
         statement = (
             select(ComparisonFinding)
-            .where(
-                ComparisonFinding.project_id == access.project_id,
-                ComparisonFinding.comparison_id == comparison_id,
-            )
-            .order_by(ComparisonFinding.created_at)
+            .where(*conditions)
+            .order_by(ComparisonFinding.created_at, ComparisonFinding.id)
         )
         return list(self._session.scalars(statement.offset(offset).limit(limit))), self._count(
             statement
@@ -373,57 +360,6 @@ class MvpApiService:
             statement
         )
 
-    def _snapshot(self, project_id: UUID, version_id: UUID) -> RevisionSnapshot:
-        entities = list(
-            self._session.scalars(select(Entity).where(Entity.project_id == project_id))
-        )
-        relationships = list(
-            self._session.scalars(select(Relationship).where(Relationship.project_id == project_id))
-        )
-        review_repository = ReviewRepository(self._session, project_id)
-        entity_evidence = {
-            entity.id: RevisionEvidence(
-                citations=[
-                    citation
-                    for citation in self._citations(review_repository.entity_provenance(entity.id))
-                    if citation.document_version_id == version_id
-                ]
-            )
-            for entity in entities
-        }
-        relationship_evidence = {
-            relationship.id: RevisionEvidence(
-                citations=[
-                    citation
-                    for citation in self._citations(
-                        review_repository.relationship_provenance(relationship.id)
-                    )
-                    if citation.document_version_id == version_id
-                ]
-            )
-            for relationship in relationships
-        }
-        return RevisionSnapshot(
-            version_id, entities, relationships, entity_evidence, relationship_evidence
-        )
-
-    @staticmethod
-    def _citations(rows: list[tuple[Any, Any, Any, Any, Any]]) -> list[Citation]:
-        return [
-            Citation(
-                citation_id=f"chunk:{chunk.id}",
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_version_id=version.id,
-                document_name=document.name,
-                section_heading=section.heading,
-                page_start=chunk.page_start,
-                page_end=chunk.page_end,
-                excerpt=evidence.excerpt,
-            )
-            for evidence, chunk, section, version, document in rows
-        ]
-
     def _count(self, statement: Any) -> int:
         return int(
             self._session.scalar(select(func.count()).select_from(statement.subquery())) or 0
@@ -438,6 +374,13 @@ class MvpApiService:
         }:
             raise ApplicationError(
                 "PROJECT_WRITE_FORBIDDEN", "Engineer-level project access is required.", 403
+            )
+
+    @staticmethod
+    def require_reviewer(access: ProjectAccess) -> None:
+        if access.role not in {MembershipRole.REVIEWER, MembershipRole.ADMIN}:
+            raise ApplicationError(
+                "PROJECT_REVIEW_FORBIDDEN", "Reviewer-level project access is required.", 403
             )
 
     @staticmethod

@@ -33,3 +33,7 @@ BrakeController
 Brake Controller
 brake_controller
 Brake-Ctrl
+
+---
+
+> **Implementation note (current):** this specification is implemented as described in `ARCHITECTURE_DECISION_RECORDS.md` (ADR-007, ADR-008) and `RAG_DESIGN.md`. Where they differ, the ADRs describe what the code does.

@@ -1,0 +1,29 @@
+{
+  "name": "ABS subsystem HLD (synthetic)",
+  "documents": ["03_ABS_Subsystem_HLD.md"],
+  "questions": [
+    {"id": "abs-01", "category": "component", "question": "What does SlipEstimator compute?", "expected_sections": ["1.1 Components"], "expected_terms": ["slip ratio"]},
+    {"id": "abs-02", "category": "component", "question": "Which software component actuates the hydraulic valves?", "expected_sections": ["1.1 Components"], "expected_terms": ["HydraulicValveDriver"]},
+    {"id": "abs-03", "category": "component", "question": "What is the ECU that hosts the ABS software?", "expected_sections": ["1.1 Components"], "expected_terms": ["BrakeEcu"]},
+    {"id": "abs-04", "category": "alias", "question": "What is ABSCtrl?", "expected_sections": ["1 Overview"], "expected_terms": ["AbsController"]},
+    {"id": "abs-05", "category": "alias", "question": "What does ABSCtrl do?", "expected_sections": ["1 Overview"], "expected_terms": ["slip"]},
+    {"id": "abs-06", "category": "interface", "question": "Which interface carries wheel speed data?", "expected_sections": ["1.2 Interfaces"], "expected_terms": ["WheelSpeedInterface"]},
+    {"id": "abs-07", "category": "interface", "question": "What does ValveCommandInterface carry?", "expected_sections": ["1.2 Interfaces"], "expected_terms": ["valve actuation"]},
+    {"id": "abs-08", "category": "dependency", "question": "What does AbsController require?", "expected_sections": ["2 Dependencies"], "expected_terms": ["WheelSpeedInterface"]},
+    {"id": "abs-09", "category": "dependency", "question": "What does AbsController provide?", "expected_sections": ["2 Dependencies"], "expected_terms": ["ValveCommandInterface"]},
+    {"id": "abs-10", "category": "dependency", "question": "Which component consumes ValveCommandInterface?", "expected_sections": ["2 Dependencies"], "expected_terms": ["HydraulicValveDriver"]},
+    {"id": "abs-11", "category": "port", "question": "Which input port receives wheel speed?", "expected_sections": ["2 Dependencies"], "expected_terms": ["P_WheelSpeed_In"]},
+    {"id": "abs-12", "category": "identifier", "question": "P_ValveCmd_Out", "expected_sections": ["2 Dependencies"], "expected_terms": ["P_ValveCmd_Out"]},
+    {"id": "abs-13", "category": "timing", "question": "How often is Run_SlipEstimation executed?", "expected_sections": ["3.1 Timing"], "expected_terms": ["10 ms"]},
+    {"id": "abs-14", "category": "timing", "question": "What happens when the slip estimation misses its deadline twice?", "expected_sections": ["3.1 Timing"], "expected_terms": ["degraded mode"]},
+    {"id": "abs-15", "category": "timing", "question": "How long does the degraded mode keep the last valve command?", "expected_sections": ["3.1 Timing"], "expected_terms": ["50 ms"]},
+    {"id": "abs-16", "category": "diagnostics", "question": "Which DID is 0xF190?", "expected_sections": ["3.2 Diagnostics"], "expected_terms": ["VehicleIdentificationNumber"]},
+    {"id": "abs-17", "category": "diagnostics", "question": "What is the length of EcuSerialNumber?", "expected_sections": ["3.2 Diagnostics"], "expected_terms": ["12"]},
+    {"id": "abs-18", "category": "diagnostics", "question": "Which diagnostic service reads data identifiers?", "expected_sections": ["3.2 Diagnostics"], "expected_terms": ["0x22"]},
+    {"id": "abs-19", "category": "hierarchy", "question": "In which section are the timing requirements described?", "expected_sections": ["3.1 Timing"], "expected_terms": ["executed every"]},
+    {"id": "abs-20", "category": "unanswerable", "answerable": false, "question": "Why is the sky blue?"},
+    {"id": "abs-21", "category": "unanswerable", "answerable": false, "question": "What is the battery management high-voltage charging specification?"},
+    {"id": "abs-22", "category": "unanswerable", "answerable": false, "question": "Who talks to the pumps?"},
+    {"id": "abs-23", "category": "unanswerable", "answerable": false, "question": "Summarise the lane keeping assist algorithm."}
+  ]
+}

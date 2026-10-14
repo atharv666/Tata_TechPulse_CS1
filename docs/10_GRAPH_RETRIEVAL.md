@@ -55,3 +55,7 @@ Graph Retrieval      Vector Retrieval
                |
                v
        Final LLM Response
+
+---
+
+> **Implementation note (current):** this specification is implemented as described in `ARCHITECTURE_DECISION_RECORDS.md` (ADR-011) and `RAG_DESIGN.md`. Where they differ, the ADRs describe what the code does.

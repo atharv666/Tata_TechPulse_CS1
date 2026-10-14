@@ -11,6 +11,7 @@ from app.models.schema import (
     Document,
     DocumentVersion,
     Entity,
+    EntityAlias,
     EntityEvidence,
     Relationship,
     RelationshipEvidence,
@@ -26,22 +27,29 @@ class ReviewRepository(ProjectScopedRepository):
     def pending_entities(self) -> list[Entity]:
         return list(
             self.session.scalars(
-                select(Entity).where(
+                select(Entity)
+                .where(
                     Entity.project_id == self.project_id,
                     Entity.trust_state == TrustState.CANDIDATE,
                     Entity.validation_state == ValidationState.PENDING,
+                    Entity.merged_into_id.is_(None),
+                    Entity.superseded_by_id.is_(None),
                 )
+                .order_by(Entity.created_at, Entity.id)
             )
         )
 
     def pending_relationships(self) -> list[Relationship]:
         return list(
             self.session.scalars(
-                select(Relationship).where(
+                select(Relationship)
+                .where(
                     Relationship.project_id == self.project_id,
                     Relationship.trust_state == TrustState.CANDIDATE,
                     Relationship.validation_state == ValidationState.PENDING,
+                    Relationship.superseded_by_id.is_(None),
                 )
+                .order_by(Relationship.created_at, Relationship.id)
             )
         )
 
@@ -56,6 +64,76 @@ class ReviewRepository(ProjectScopedRepository):
                 Relationship.project_id == self.project_id, Relationship.id == relationship_id
             )
         )
+
+    def entity_names(self, entity_ids: set[UUID]) -> dict[UUID, str]:
+        if not entity_ids:
+            return {}
+        rows = self.session.execute(
+            select(Entity.id, Entity.canonical_name).where(
+                Entity.project_id == self.project_id, Entity.id.in_(entity_ids)
+            )
+        )
+        return {entity_id: name for entity_id, name in rows}
+
+    def find_entity(self, normalized_name: str, entity_type: str) -> Entity | None:
+        return self.session.scalar(
+            select(Entity).where(
+                Entity.project_id == self.project_id,
+                Entity.normalized_name == normalized_name,
+                Entity.entity_type == entity_type,
+            )
+        )
+
+    def aliases_of(self, entity_id: UUID) -> list[EntityAlias]:
+        return list(
+            self.session.scalars(
+                select(EntityAlias).where(
+                    EntityAlias.project_id == self.project_id, EntityAlias.entity_id == entity_id
+                )
+            )
+        )
+
+    def alias_owner(self, normalized_alias: str) -> UUID | None:
+        return self.session.scalar(
+            select(EntityAlias.entity_id).where(
+                EntityAlias.project_id == self.project_id,
+                EntityAlias.normalized_alias == normalized_alias,
+            )
+        )
+
+    def active_relationships_touching(self, entity_id: UUID) -> list[Relationship]:
+        return list(
+            self.session.scalars(
+                select(Relationship)
+                .where(
+                    Relationship.project_id == self.project_id,
+                    Relationship.superseded_by_id.is_(None),
+                    (Relationship.source_entity_id == entity_id)
+                    | (Relationship.target_entity_id == entity_id),
+                )
+                .order_by(Relationship.created_at, Relationship.id)
+            )
+        )
+
+    def find_active_relationship(
+        self, source_id: UUID, target_id: UUID, relationship_type: str
+    ) -> Relationship | None:
+        return self.session.scalars(
+            select(Relationship)
+            .where(
+                Relationship.project_id == self.project_id,
+                Relationship.source_entity_id == source_id,
+                Relationship.target_entity_id == target_id,
+                Relationship.relationship_type == relationship_type,
+                Relationship.superseded_by_id.is_(None),
+            )
+            .order_by(Relationship.created_at, Relationship.id)
+        ).first()
+
+    def add_alias(self, alias: EntityAlias) -> EntityAlias:
+        self._require_project(alias.project_id)
+        self.session.add(alias)
+        return alias
 
     def add_entity(self, entity: Entity) -> Entity:
         self._require_project(entity.project_id)

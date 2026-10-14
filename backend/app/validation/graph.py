@@ -6,8 +6,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from app.canonicalization.core import canonical_relationship_type
-from app.models.enums import ExtractionType
+from app.models.enums import ExtractionType, SourceClassification
 from app.models.schema import Entity, EntityEvidence, Relationship, RelationshipEvidence
+
+INFERRED_FACTOR = Decimal("0.85")
+OCR_FACTOR = Decimal("0.95")
+CORROBORATION_BONUS = Decimal("0.02")
 
 
 @dataclass(frozen=True)
@@ -18,17 +22,33 @@ class ValidationOutcome:
 
 
 def calculate_confidence(
-    raw_confidence: Decimal, extraction_type: ExtractionType, evidence_count: int
+    raw_confidence: Decimal,
+    extraction_type: ExtractionType,
+    evidence_count: int,
+    *,
+    ocr_only: bool = False,
 ) -> Decimal:
-    """Apply deterministic provenance/extraction modifiers; this never grants human verification."""
+    """Pure function of the extractor's value and the evidence: rebuilding never compounds it.
+
+    Inferred facts are discounted, facts read only from OCR'd text are discounted slightly, and
+    independent corroboration adds a small bonus. This never grants human verification.
+    """
     value = raw_confidence
     if extraction_type is ExtractionType.INFERRED:
-        value *= Decimal("0.85")
+        value *= INFERRED_FACTOR
+    if ocr_only:
+        value *= OCR_FACTOR
     if evidence_count == 0:
         value = Decimal("0")
     elif evidence_count > 1:
-        value = min(Decimal("1"), value + Decimal("0.02"))
+        value = min(Decimal("1"), value + CORROBORATION_BONUS)
     return value.quantize(Decimal("0.001"))
+
+
+def _ocr_only(evidence: list[EntityEvidence] | list[RelationshipEvidence]) -> bool:
+    return bool(evidence) and all(
+        item.source_classification is SourceClassification.OCR_TEXT for item in evidence
+    )
 
 
 def validate_entity(entity: Entity, evidence: list[EntityEvidence]) -> ValidationOutcome:
@@ -39,7 +59,10 @@ def validate_entity(entity: Entity, evidence: list[EntityEvidence]) -> Validatio
         reasons.append("Entity type is missing.")
     if any(item.project_id != entity.project_id for item in evidence):
         reasons.append("Entity evidence crosses project boundary.")
-    confidence = calculate_confidence(entity.confidence, entity.extraction_type, len(evidence))
+    raw = entity.raw_confidence if entity.raw_confidence is not None else entity.confidence
+    confidence = calculate_confidence(
+        raw, entity.extraction_type, len(evidence), ocr_only=_ocr_only(evidence)
+    )
     if not evidence:
         reasons.append("Entity has no source evidence.")
     return ValidationOutcome(not reasons, confidence, tuple(reasons))
@@ -52,8 +75,7 @@ def validate_relationship(
     evidence: list[RelationshipEvidence],
 ) -> ValidationOutcome:
     reasons: list[str] = []
-    canonical_type = canonical_relationship_type(relationship.relationship_type)
-    if canonical_type is None:
+    if canonical_relationship_type(relationship.relationship_type) is None:
         reasons.append("Relationship type is unsupported.")
     if source is None or target is None:
         reasons.append("Relationship endpoint is undefined or outside the project.")
@@ -67,23 +89,12 @@ def validate_relationship(
         reasons.append("Relationship has no source evidence.")
     if any(item.project_id != relationship.project_id for item in evidence):
         reasons.append("Relationship evidence crosses project boundary.")
+    raw = (
+        relationship.raw_confidence
+        if relationship.raw_confidence is not None
+        else relationship.confidence
+    )
     confidence = calculate_confidence(
-        relationship.confidence, relationship.extraction_type, len(evidence)
+        raw, relationship.extraction_type, len(evidence), ocr_only=_ocr_only(evidence)
     )
     return ValidationOutcome(not reasons, confidence, tuple(reasons))
-
-
-def interface_findings(
-    entities: list[Entity], relationships: list[Relationship]
-) -> dict[str, tuple[str, ...]]:
-    """Emit non-blocking potential findings for interfaces lacking a provider relationship."""
-    providers = {
-        relationship.target_entity_id
-        for relationship in relationships
-        if relationship.relationship_type == "PROVIDES"
-    }
-    return {
-        str(entity.id): ("Potential missing provider for interface.",)
-        for entity in entities
-        if entity.entity_type == "INTERFACE" and entity.id not in providers
-    }

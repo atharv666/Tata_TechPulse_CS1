@@ -25,6 +25,7 @@ class SourceClassification(StrEnum):
     TABLE = "TABLE"
     DIAGRAM = "DIAGRAM"
     MULTI_SOURCE_INFERENCE = "MULTI_SOURCE_INFERENCE"
+    OCR_TEXT = "OCR_TEXT"
 
 
 class ValidationState(StrEnum):

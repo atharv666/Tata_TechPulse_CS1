@@ -6,10 +6,14 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
+from app.canonicalization.core import normalize_name
+from app.core.errors import ConflictError, NotFoundError
 from app.core.metrics import metrics
+from app.extraction.taxonomy import ENTITY_TYPES, RELATIONSHIP_TYPES
 from app.models.enums import MembershipRole, TrustState, ValidationState
 from app.models.schema import (
     Entity,
+    EntityAlias,
     EntityEvidence,
     Relationship,
     RelationshipEvidence,
@@ -50,33 +54,40 @@ class ReviewService:
 
     def review_queue(self) -> list[ReviewQueueItem]:
         self._require_read()
+        entities = self._repository.pending_entities()
+        relationships = self._repository.pending_relationships()
+        names = self._repository.entity_names(
+            {item.source_entity_id for item in relationships}
+            | {item.target_entity_id for item in relationships}
+        )
         return [
             *[
                 ReviewQueueItem(
                     fact_kind="ENTITY",
                     fact_id=entity.id,
-                    label=entity.canonical_name,
+                    label=f"{entity.canonical_name} [{entity.entity_type}]",
                     confidence=entity.confidence,
                     extraction_type=entity.extraction_type,
                     validation_state=entity.validation_state,
                     provenance=self.entity_provenance(entity.id),
                 )
-                for entity in self._repository.pending_entities()
+                for entity in entities
             ],
             *[
                 ReviewQueueItem(
                     fact_kind="RELATIONSHIP",
                     fact_id=relationship.id,
                     label=(
-                        f"{relationship.source_entity_id} {relationship.relationship_type} "
-                        f"{relationship.target_entity_id}"
+                        f"{names.get(relationship.source_entity_id, '?')} "
+                        f"{relationship.relationship_type} "
+                        f"{names.get(relationship.target_entity_id, '?')}"
                     ),
                     confidence=relationship.confidence,
                     extraction_type=relationship.extraction_type,
                     validation_state=relationship.validation_state,
                     provenance=self.relationship_provenance(relationship.id),
                 )
-                for relationship in self._repository.pending_relationships()
+                for relationship in relationships
             ],
         ]
 
@@ -119,18 +130,38 @@ class ReviewService:
     def correct_entity(
         self, entity_id: UUID, canonical_name: str, entity_type: str, reason: str
     ) -> Entity:
-        """Create a new reviewed fact; the original candidate remains intact and traceable."""
+        """Replace an entity with a reviewed one; the original stays, superseded, for audit.
+
+        Relationships of the original move to the corrected entity (as clones of the edges, so
+        the originals remain), and the old name becomes an alias so later statements that still
+        use it resolve to the corrected entity.
+        """
         self._require_reviewer()
         original = self._entity_for_review(entity_id)
+        name = canonical_name.strip()
+        normalized = normalize_name(name)
+        if not normalized:
+            raise ValueError("The corrected entity needs a name.")
+        if entity_type not in ENTITY_TYPES:
+            raise ValueError(f"Unsupported entity type '{entity_type}'.")
+        if normalized == original.normalized_name and entity_type == original.entity_type:
+            raise ValueError("The correction changes nothing; verify the entity instead.")
+        if self._repository.find_entity(normalized, entity_type) is not None:
+            raise ConflictError(
+                "ENTITY_ALREADY_EXISTS",
+                f"An entity named '{name}' of type {entity_type} already exists. "
+                "Reject this candidate or merge the duplicates instead.",
+            )
         corrected = Entity(
             id=uuid4(),
             project_id=original.project_id,
-            canonical_name=canonical_name,
-            normalized_name=canonical_name.casefold().strip(),
+            canonical_name=name,
+            normalized_name=normalized,
             entity_type=entity_type,
             trust_state=TrustState.TRUSTED,
             extraction_type=original.extraction_type,
             validation_state=ValidationState.HUMAN_CORRECTED,
+            raw_confidence=original.raw_confidence,
             confidence=original.confidence,
             extraction_metadata={
                 **original.extraction_metadata,
@@ -139,9 +170,13 @@ class ReviewService:
             },
         )
         self._repository.add_entity(corrected)
+        self._repository.session.flush()
         self._clone_entity_evidence(original, corrected)
+        self._carry_over_aliases(original, corrected)
+        self._move_relationships(original, corrected)
         original.validation_state = ValidationState.HUMAN_CORRECTED
         original.trust_state = TrustState.CANDIDATE
+        original.superseded_by_id = corrected.id
         self._record(entity=original, state=ValidationState.HUMAN_CORRECTED, reason=reason)
         self._record(entity=corrected, state=ValidationState.HUMAN_CORRECTED, reason=reason)
         metrics.increment("review_corrections")
@@ -158,6 +193,26 @@ class ReviewService:
     ) -> Relationship:
         self._require_reviewer()
         original = self._relationship_for_review(relationship_id)
+        if relationship_type not in RELATIONSHIP_TYPES:
+            raise ValueError(f"Unsupported relationship type '{relationship_type}'.")
+        if source_entity_id == target_entity_id:
+            raise ValueError("A relationship needs two different endpoints.")
+        for endpoint_id in (source_entity_id, target_entity_id):
+            self._require_active_endpoint(endpoint_id)
+        if (
+            source_entity_id == original.source_entity_id
+            and target_entity_id == original.target_entity_id
+            and relationship_type == original.relationship_type
+        ):
+            raise ValueError("The correction changes nothing; verify the relationship instead.")
+        twin = self._repository.find_active_relationship(
+            source_entity_id, target_entity_id, relationship_type
+        )
+        if twin is not None:
+            raise ConflictError(
+                "RELATIONSHIP_ALREADY_EXISTS",
+                "This relationship already exists. Reject the candidate instead of correcting it.",
+            )
         corrected = Relationship(
             id=uuid4(),
             project_id=original.project_id,
@@ -167,6 +222,7 @@ class ReviewService:
             trust_state=TrustState.TRUSTED,
             extraction_type=original.extraction_type,
             validation_state=ValidationState.HUMAN_CORRECTED,
+            raw_confidence=original.raw_confidence,
             confidence=original.confidence,
             attributes={
                 **original.attributes,
@@ -175,13 +231,33 @@ class ReviewService:
             },
         )
         self._repository.add_relationship(corrected)
+        self._repository.session.flush()
         self._clone_relationship_evidence(original, corrected)
         original.validation_state = ValidationState.HUMAN_CORRECTED
         original.trust_state = TrustState.CANDIDATE
+        original.superseded_by_id = corrected.id
         self._record(relationship=original, state=ValidationState.HUMAN_CORRECTED, reason=reason)
         self._record(relationship=corrected, state=ValidationState.HUMAN_CORRECTED, reason=reason)
         metrics.increment("review_corrections")
+        metrics.record_review_decision("CORRECTED")
         return corrected
+
+    def _require_active_endpoint(self, entity_id: UUID) -> None:
+        endpoint = self._repository.get_entity(entity_id)
+        if endpoint is None:
+            raise NotFoundError(
+                "ENTITY_NOT_FOUND", f"Entity {entity_id} was not found in this project."
+            )
+        if (
+            endpoint.merged_into_id is not None
+            or endpoint.superseded_by_id is not None
+            or endpoint.validation_state is ValidationState.REJECTED
+        ):
+            raise ConflictError(
+                "ENTITY_NOT_ACTIVE",
+                f"'{endpoint.canonical_name}' is merged, replaced or rejected and cannot be an "
+                "endpoint.",
+            )
 
     def entity_provenance(self, entity_id: UUID) -> list[ProvenanceDisplay]:
         self._require_read()
@@ -250,15 +326,85 @@ class ReviewService:
 
     def _entity_for_review(self, entity_id: UUID) -> Entity:
         entity = self._repository.get_entity(entity_id)
-        if entity is None or entity.validation_state is not ValidationState.PENDING:
-            raise ValueError("Pending entity candidate was not found in this project.")
+        if entity is None:
+            raise NotFoundError("ENTITY_NOT_FOUND", "Entity was not found in this project.")
+        if (
+            entity.validation_state is not ValidationState.PENDING
+            or entity.merged_into_id is not None
+            or entity.superseded_by_id is not None
+        ):
+            raise ConflictError(
+                "NOT_PENDING",
+                "This entity was already reviewed, merged into another entity or replaced.",
+            )
         return entity
 
     def _relationship_for_review(self, relationship_id: UUID) -> Relationship:
         relationship = self._repository.get_relationship(relationship_id)
-        if relationship is None or relationship.validation_state is not ValidationState.PENDING:
-            raise ValueError("Pending relationship candidate was not found in this project.")
+        if relationship is None:
+            raise NotFoundError(
+                "RELATIONSHIP_NOT_FOUND", "Relationship was not found in this project."
+            )
+        if (
+            relationship.validation_state is not ValidationState.PENDING
+            or relationship.superseded_by_id is not None
+        ):
+            raise ConflictError(
+                "NOT_PENDING", "This relationship was already reviewed or replaced."
+            )
         return relationship
+
+    def _carry_over_aliases(self, original: Entity, corrected: Entity) -> None:
+        """The corrected entity answers to everything the original did, including its old name."""
+        for alias in self._repository.aliases_of(original.id):
+            alias.entity_id = corrected.id
+        old_name = original.normalized_name
+        if old_name != corrected.normalized_name and self._repository.alias_owner(old_name) is None:
+            self._repository.add_alias(
+                EntityAlias(
+                    project_id=original.project_id,
+                    entity_id=corrected.id,
+                    alias=original.canonical_name,
+                    normalized_alias=old_name,
+                    source="HUMAN",
+                )
+            )
+
+    def _move_relationships(self, original: Entity, corrected: Entity) -> None:
+        """Re-attach the original's edges to the corrected entity without altering the originals."""
+        for relationship in self._repository.active_relationships_touching(original.id):
+            source = relationship.source_entity_id
+            target = relationship.target_entity_id
+            source = corrected.id if source == original.id else source
+            target = corrected.id if target == original.id else target
+            if source == target:
+                continue  # would be a self-loop; the edge stays on the superseded entity
+            twin = self._repository.find_active_relationship(
+                source, target, relationship.relationship_type
+            )
+            if twin is not None:
+                relationship.superseded_by_id = twin.id
+                continue
+            clone = Relationship(
+                id=uuid4(),
+                project_id=relationship.project_id,
+                source_entity_id=source,
+                target_entity_id=target,
+                relationship_type=relationship.relationship_type,
+                trust_state=relationship.trust_state,
+                extraction_type=relationship.extraction_type,
+                validation_state=relationship.validation_state,
+                raw_confidence=relationship.raw_confidence,
+                confidence=relationship.confidence,
+                attributes={
+                    **relationship.attributes,
+                    "moved_from_relationship_id": str(relationship.id),
+                },
+            )
+            self._repository.add_relationship(clone)
+            self._repository.session.flush()
+            self._clone_relationship_evidence(relationship, clone)
+            relationship.superseded_by_id = clone.id
 
     def _require_read(self) -> None:
         if self._actor.role not in set(MembershipRole):

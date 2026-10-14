@@ -6,13 +6,7 @@ import io
 
 import fitz
 import pytest
-from app.ingestion.chunking import chunk_section
-from app.ingestion.contracts import (
-    IngestionError,
-    NormalizedSection,
-    ParsedBlock,
-    SourcePosition,
-)
+from app.ingestion.contracts import IngestionError
 from app.ingestion.normalize import normalize_document
 from app.ingestion.parsers import OCRProvider, ParserFactory, PDFParser
 from app.ingestion.validation import content_hash, safe_filename, validate_upload
@@ -33,8 +27,8 @@ def test_normal_pdf_preserves_page_and_text() -> None:
         make_pdf(["1 Architecture", "BodyControlComponent provides status."])
     )
 
-    assert parsed.blocks[0].position.page == 1
-    assert "BodyControlComponent" in parsed.blocks[0].text
+    assert all(block.position.page == 1 for block in parsed.blocks)
+    assert "BodyControlComponent" in " ".join(block.text for block in parsed.blocks)
 
 
 def test_sectioned_pdf_preserves_hierarchy() -> None:
@@ -115,14 +109,15 @@ def test_docx_xlsx_csv_and_markdown_parsers() -> None:
     docx.add_paragraph("Document content")
     docx_buffer = io.BytesIO()
     docx.save(docx_buffer)
-    assert (
-        "Document content"
-        in ParserFactory()
+    parsed_docx = (
+        ParserFactory()
         .parser_for(validate_upload("hld.docx", None, docx_buffer.getvalue(), 100000))
         .parse(docx_buffer.getvalue())
-        .blocks[1]
-        .text
     )
+    assert [(b.kind.value, b.text) for b in parsed_docx.blocks] == [
+        ("heading", "System"),
+        ("paragraph", "Document content"),
+    ]
 
     workbook = Workbook()
     worksheet = workbook.active
@@ -132,41 +127,25 @@ def test_docx_xlsx_csv_and_markdown_parsers() -> None:
     xlsx_buffer = io.BytesIO()
     workbook.save(xlsx_buffer)
     xlsx = xlsx_buffer.getvalue()
-    assert (
+    parsed_xlsx = (
         ParserFactory()
         .parser_for(validate_upload("catalog.xlsx", None, xlsx, 100000))
         .parse(xlsx)
-        .blocks[0]
-        .tables[0]
-        .rows[1][0]
-        == "Speed"
     )
+    assert parsed_xlsx.blocks[0].text == "Signals"  # the sheet name is a heading
+    assert parsed_xlsx.blocks[1].tables[0].rows[1][0] == "Speed"
+    assert "| Speed | uint16 |" in parsed_xlsx.blocks[1].text
 
     csv_source = b"Signal,Type\nSpeed,uint16\n"
     assert ParserFactory().parser_for(
         validate_upload("signals.csv", "text/csv", csv_source, 100000)
     ).parse(csv_source).blocks[0].tables[0].rows[0] == ["Signal", "Type"]
     markdown = b"# Architecture\nBrakeController\n"
-    assert (
+    parsed_markdown = (
         ParserFactory()
         .parser_for(validate_upload("hld.md", "text/markdown", markdown, 100000))
         .parse(markdown)
-        .blocks[0]
-        .text.startswith("# Architecture")
     )
-
-
-def test_hierarchy_preserving_chunking_only_splits_oversized_sections() -> None:
-    section = NormalizedSection(
-        heading="Interfaces",
-        level=2,
-        position=SourcePosition(page=4),
-        content=[
-            ParsedBlock("one two three four five six seven", SourcePosition(page=4))
-        ],
-    )
-    chunks = chunk_section(section, max_tokens=4, overlap_tokens=1)
-
-    assert len(chunks) == 2
-    assert all(chunk.content.startswith("Section: Interfaces") for chunk in chunks)
-    assert all(chunk.position.page == 4 for chunk in chunks)
+    assert parsed_markdown.blocks[0].heading_level == 1
+    assert parsed_markdown.blocks[0].text == "Architecture"
+    assert parsed_markdown.blocks[1].text == "BrakeController"

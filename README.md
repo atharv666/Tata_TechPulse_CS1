@@ -62,6 +62,16 @@ alembic upgrade head
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+The ingestion pipeline (parse → embed → extract → resolve → build graph) runs in a separate worker process that
+claims jobs from PostgreSQL. Start it in a second terminal, from the same environment and `.env`:
+
+```bash
+cd worker
+python -m worker_runner.main
+```
+
+Restart both the API and the worker after changing `.env` or pulling code (a stale worker keeps the old settings).
+
 ### 3.2 Frontend Setup
 ```bash
 # Navigate to frontend and install dependencies
@@ -80,18 +90,22 @@ npm run build
 
 ---
 
-## 4. Seeding Demo Data, Graph Builds & Benchmarks
+## 4. Seeding Demo Data, Graph Builds & Evaluation
 
 ```bash
-# 1. Seed synthetic AUTOSAR demonstration project and documents
-python scripts/seed_demo_data.py
+alembic upgrade head                          # schema first (scripts never create tables)
 
-# 2. Execute explicit candidate-to-trusted graph build job
-python scripts/build_graph.py
+# 1. Queue the synthetic sample HLDs through the real pipeline (nothing is written directly)
+python scripts/seed_demo_data.py              # the worker service processes the queue
+python scripts/seed_demo_data.py --run-worker # ... or process it here with the .env providers
 
-# 3. Run evaluation benchmark suite (measures precision, recall, citation coverage & latency)
-python scripts/benchmark.py
+# 2. Explicitly (re)build the graph: resolve duplicates, bind relationships, refresh findings
+python scripts/build_graph.py --run-worker
+
+# 3. Measure retrieval quality on a labelled question set (throw-away database)
+python scripts/evaluate_rag.py                # offline; add --live for the configured providers
 ```
+Everything the pipeline produces starts as PENDING; only a reviewer can verify a fact.
 
 ---
 
@@ -101,12 +115,11 @@ Run full formatting, linting, type checks, and pytest suites locally:
 
 ```powershell
 # Format and Lint check
-python -m ruff format --check backend\app worker\app tests
-python -m ruff check backend\app worker\app tests
+python -m ruff format --check backend\app worker tests scripts
+python -m ruff check backend\app worker tests scripts
 
 # Type Check
 python -m mypy --config-file backend\pyproject.toml backend\app
-python -m mypy worker\app
 
 # Pytest Test Suite
 pytest -v
@@ -115,12 +128,14 @@ pytest -v
 ---
 
 ## 6. Project Features & UI Navigation
-- **Project Selection**: Context switcher in rail navigation.
-- **Dashboard**: High-level engineering posture metrics.
-- **Documents & Detail**: Document library, SHA-256 checksums, version history, and ingestion.
-- **Ask Architecture**: Grounded natural-language query engine with claims, citations, graph paths, and limitations.
-- **Knowledge Graph Explorer**: SVG topology canvas, node/edge fact inspector, and inline review actions (`Verify`, `Reject`).
-- **Semantic Impact Analysis**: Rule-driven dependency traversal with direct/indirect impact labels.
-- **Human Review Queue**: Inspection queue for pending candidate facts with source evidence.
-- **Revision Comparison**: Base vs Target document revision diffing.
-- **Operational Audit**: Job progress states and project audit logs.
+- **Ask Architecture**: grounded answers in `HYBRID`, `GRAPH` or `SOURCE` mode: claims with citation markers, graph facts with confidence · extraction · validation status, source status, limitations.
+- **Knowledge Graph**: 3D explorer (colour *and* text for review state), filters, fact inspector with evidence, aliases, merged duplicates, history and findings; Verify / Edit / Reject with a recorded reason.
+- **Impact Analysis**: bounded PostgreSQL traversal with per-relationship propagation rules; each affected element shows its hops, the chain of facts and their source passages.
+- **Review Queue** and **Findings**: pending facts; "potential inconsistency" prompts that stay dismissed once dismissed.
+- **Revision Comparison**: metadata, section and value changes plus entity/relationship changes with evidence from both versions.
+- **Export**: JSON / CSV / Excel with provenance from the Knowledge Graph screen.
+- **Documents**: a sequential upload queue (one document is processed at a time, the rest wait), a five-stage pipeline tracker that ticks each stage as its job completes, versions (same file name = next version; identical bytes are rejected), re-embedding. **Audit**: jobs and audit history.
+
+Submission snapshot: `python scripts/package_submission.py --dest <folder>` copies a clean source tree (no `.env`, caches, uploads or archives); run `python scripts/check_no_secrets.py` on the result.
+
+Design records: `docs/ARCHITECTURE_DECISION_RECORDS.md`, `docs/RAG_DESIGN.md`, status: `docs/IMPLEMENTATION_STATUS.md`.

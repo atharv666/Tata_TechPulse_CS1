@@ -17,6 +17,11 @@ from app.providers.http import RetryingHttpClient
 from app.providers.openai_compatible import _validate_embeddings
 
 
+def _l2_normalize(vector: list[float]) -> list[float]:
+    norm = sum(value * value for value in vector) ** 0.5
+    return vector if norm == 0 else [value / norm for value in vector]
+
+
 class GeminiEmbeddingProvider(EmbeddingProvider):
     """Call Gemini's native embedding API so configured dimensions are enforced.
 
@@ -62,6 +67,8 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             raise StructuredOutputError(
                 "Gemini embedding response did not contain vectors."
             ) from error
+        # The API does not normalise vectors when outputDimensionality is below the native size.
+        vectors = [_l2_normalize(vector) for vector in vectors]
         result = EmbeddingResult(
             vectors=vectors, model=self._model, dimensions=self._settings.dimensions
         )

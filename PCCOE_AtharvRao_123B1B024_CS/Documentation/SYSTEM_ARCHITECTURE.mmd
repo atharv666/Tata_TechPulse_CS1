@@ -1,0 +1,21 @@
+flowchart TB
+    U["Engineer / Reviewer"] --> UI["React + TypeScript UI<br/>Documents | Ask | Graph | Impact<br/>Review | Findings | Comparison | Audit"]
+    UI --> API["FastAPI service layer<br/>(project-scoped authorization)"]
+    API <--> DB[("PostgreSQL 18 + pgvector<br/>system of record")]
+    API -->|"enqueue jobs"| JQ["Job queue in PostgreSQL<br/>(SKIP LOCKED, leases, retries)"]
+    JQ --> W["Worker process<br/>parse > embed > extract ><br/>resolve > build graph"]
+    W --> DB
+    W --> LLM["LLMProvider<br/>Groq gpt-oss-120b"]
+    W --> EMB["EmbeddingProvider<br/>Gemini gemini-embedding-2 (768D)"]
+    W -.-> OCR["OCRProvider (optional)<br/>Tesseract | Gemini vision"]
+    API --> RET["Hybrid retrieval<br/>dense (HNSW) + lexical (tsvector) + RRF"]
+    API --> TRAV["Bounded graph traversal<br/>recursive CTE, max depth 3"]
+    RET --> EV["Evidence bundle<br/>chunks + graph facts + provenance"]
+    TRAV --> EV
+    EV --> SUF{"Evidence sufficient?<br/>(max 2 rounds)"}
+    SUF -- "no" --> REF["Insufficient evidence"]
+    SUF -- "yes" --> ANS["Grounded answer<br/>verified claims + citations + status"]
+    ANS --> UI
+    DB --- STORE["documents | sections | chunks | entities<br/>relationships | evidence | findings<br/>reviews | audit | jobs | comparisons"]
+    UI --> HR["Human review<br/>Verify | Edit | Reject"]
+    HR --> DB

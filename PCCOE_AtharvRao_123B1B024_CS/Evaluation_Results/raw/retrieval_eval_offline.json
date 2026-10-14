@@ -1,0 +1,441 @@
+{
+  "summary": {
+    "questions": 23,
+    "answerable": 19,
+    "unanswerable": 4,
+    "top_k": 8,
+    "recall_at_k": 0.9474,
+    "mrr": 0.8947,
+    "context_recall": 0.9474,
+    "evidence_terms": 0.9474,
+    "answer_terms": 0.7895,
+    "citation_validity": 1.0,
+    "refusal_accuracy": 1.0,
+    "false_refusal": 0.0526,
+    "dropped_claim_rate": 0.0,
+    "latency_ms_mean": 216.0,
+    "latency_ms_p95": 501.3
+  },
+  "results": [
+    {
+      "id": "abs-01",
+      "category": "component",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 501.3,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 1 Overview > 1.1 Components"
+      ]
+    },
+    {
+      "id": "abs-02",
+      "category": "component",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 3,
+      "dropped_claims": 0,
+      "latency_ms": 417.0,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 1 Overview > 1.1 Components",
+        "ABS Subsystem High-Level Design > 1 Overview",
+        "ABS Subsystem High-Level Design > 2 Dependencies"
+      ]
+    },
+    {
+      "id": "abs-03",
+      "category": "component",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 5,
+      "dropped_claims": 0,
+      "latency_ms": 632.5,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 1 Overview > 1.1 Components",
+        "ABS Subsystem High-Level Design > 1 Overview",
+        "ABS Subsystem High-Level Design",
+        "ABS Subsystem High-Level Design > 2 Dependencies",
+        "ABS Subsystem High-Level Design > 3 Timing and Diagnostics > 3.2 Diagnostics"
+      ]
+    },
+    {
+      "id": "abs-04",
+      "category": "alias",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 158.9,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 1 Overview"
+      ]
+    },
+    {
+      "id": "abs-05",
+      "category": "alias",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": false,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 132.1,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 1 Overview"
+      ]
+    },
+    {
+      "id": "abs-06",
+      "category": "interface",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 4,
+      "dropped_claims": 0,
+      "latency_ms": 190.0,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 1 Overview > 1.2 Interfaces",
+        "ABS Subsystem High-Level Design > 1 Overview",
+        "ABS Subsystem High-Level Design > 2 Dependencies",
+        "ABS Subsystem High-Level Design > 3 Timing and Diagnostics > 3.2 Diagnostics"
+      ]
+    },
+    {
+      "id": "abs-07",
+      "category": "interface",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 2,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 2,
+      "dropped_claims": 0,
+      "latency_ms": 130.4,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 2 Dependencies",
+        "ABS Subsystem High-Level Design > 1 Overview > 1.2 Interfaces"
+      ]
+    },
+    {
+      "id": "abs-08",
+      "category": "dependency",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 3,
+      "dropped_claims": 0,
+      "latency_ms": 237.3,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 2 Dependencies",
+        "ABS Subsystem High-Level Design > 1 Overview > 1.1 Components",
+        "ABS Subsystem High-Level Design > 1 Overview"
+      ]
+    },
+    {
+      "id": "abs-09",
+      "category": "dependency",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 3,
+      "dropped_claims": 0,
+      "latency_ms": 222.4,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 2 Dependencies",
+        "ABS Subsystem High-Level Design > 1 Overview > 1.1 Components",
+        "ABS Subsystem High-Level Design > 1 Overview"
+      ]
+    },
+    {
+      "id": "abs-10",
+      "category": "dependency",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 1065.1,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 2 Dependencies"
+      ]
+    },
+    {
+      "id": "abs-11",
+      "category": "port",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 2,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 3,
+      "dropped_claims": 0,
+      "latency_ms": 480.9,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 1 Overview > 1.2 Interfaces",
+        "ABS Subsystem High-Level Design > 2 Dependencies",
+        "ABS Subsystem High-Level Design > 1 Overview"
+      ]
+    },
+    {
+      "id": "abs-12",
+      "category": "identifier",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 186.4,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 2 Dependencies"
+      ]
+    },
+    {
+      "id": "abs-13",
+      "category": "timing",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 128.9,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 3 Timing and Diagnostics > 3.1 Timing"
+      ]
+    },
+    {
+      "id": "abs-14",
+      "category": "timing",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 127.0,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 3 Timing and Diagnostics > 3.1 Timing"
+      ]
+    },
+    {
+      "id": "abs-15",
+      "category": "timing",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 79.7,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 3 Timing and Diagnostics > 3.1 Timing"
+      ]
+    },
+    {
+      "id": "abs-16",
+      "category": "diagnostics",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": false,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 40.2,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 3 Timing and Diagnostics > 3.2 Diagnostics"
+      ]
+    },
+    {
+      "id": "abs-17",
+      "category": "diagnostics",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": false,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 48.0,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 3 Timing and Diagnostics > 3.2 Diagnostics"
+      ]
+    },
+    {
+      "id": "abs-18",
+      "category": "diagnostics",
+      "answerable": true,
+      "refused": false,
+      "first_expected_rank": 1,
+      "in_context": true,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 1,
+      "dropped_claims": 0,
+      "latency_ms": 52.7,
+      "rounds": 1,
+      "selected_paths": [
+        "ABS Subsystem High-Level Design > 3 Timing and Diagnostics > 3.2 Diagnostics"
+      ]
+    },
+    {
+      "id": "abs-19",
+      "category": "hierarchy",
+      "answerable": true,
+      "refused": true,
+      "first_expected_rank": null,
+      "in_context": false,
+      "evidence_terms_found": false,
+      "answer_terms_found": false,
+      "citations_valid": true,
+      "claims": 0,
+      "dropped_claims": 0,
+      "latency_ms": 22.8,
+      "rounds": 1,
+      "selected_paths": []
+    },
+    {
+      "id": "abs-20",
+      "category": "unanswerable",
+      "answerable": false,
+      "refused": true,
+      "first_expected_rank": null,
+      "in_context": false,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 0,
+      "dropped_claims": 0,
+      "latency_ms": 24.6,
+      "rounds": 1,
+      "selected_paths": []
+    },
+    {
+      "id": "abs-21",
+      "category": "unanswerable",
+      "answerable": false,
+      "refused": true,
+      "first_expected_rank": null,
+      "in_context": false,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 0,
+      "dropped_claims": 0,
+      "latency_ms": 34.1,
+      "rounds": 1,
+      "selected_paths": []
+    },
+    {
+      "id": "abs-22",
+      "category": "unanswerable",
+      "answerable": false,
+      "refused": true,
+      "first_expected_rank": null,
+      "in_context": false,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 0,
+      "dropped_claims": 0,
+      "latency_ms": 27.6,
+      "rounds": 1,
+      "selected_paths": []
+    },
+    {
+      "id": "abs-23",
+      "category": "unanswerable",
+      "answerable": false,
+      "refused": true,
+      "first_expected_rank": null,
+      "in_context": false,
+      "evidence_terms_found": true,
+      "answer_terms_found": true,
+      "citations_valid": true,
+      "claims": 0,
+      "dropped_claims": 0,
+      "latency_ms": 27.5,
+      "rounds": 1,
+      "selected_paths": []
+    }
+  ]
+}

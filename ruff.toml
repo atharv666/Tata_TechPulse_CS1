@@ -1,0 +1,12 @@
+# Applies to everything outside backend/ (backend/pyproject.toml has its own, stricter settings).
+line-length = 88
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["E501", "B011"]
+"scripts/**/*.py" = ["E501"]
+"tests/conftest.py" = ["E402"]
+"worker/**/*.py" = ["E402", "E501"]

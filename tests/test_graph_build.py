@@ -18,7 +18,6 @@ from app.models.schema import (
 )
 from app.validation.graph import (
     calculate_confidence,
-    interface_findings,
     validate_entity,
     validate_relationship,
 )
@@ -158,13 +157,29 @@ def test_cross_project_evidence_and_unsupported_type_are_invalid() -> None:
     assert not validate_relationship(relationship, fact, None, []).valid
 
 
-def test_missing_interface_provider_is_a_non_blocking_potential_finding() -> None:
+def test_confidence_discounts_inferred_and_ocr_only_facts() -> None:
+    raw = Decimal("0.900")
+    assert calculate_confidence(raw, ExtractionType.EXPLICIT, 1) == Decimal("0.900")
+    assert calculate_confidence(raw, ExtractionType.INFERRED, 1) == Decimal("0.765")
+    assert calculate_confidence(
+        raw, ExtractionType.EXPLICIT, 1, ocr_only=True
+    ) == Decimal("0.855")
+    assert calculate_confidence(raw, ExtractionType.EXPLICIT, 2) == Decimal("0.920")
+
+
+def test_confidence_comes_from_raw_confidence_not_from_the_stored_value() -> None:
     project = uuid4()
-    interface = entity(project, "WheelSpeedInterface", "INTERFACE")
-    assert (
-        "Potential missing provider"
-        in interface_findings([interface], [])[str(interface.id)][0]
+    fact = entity(project, "BrakeController")
+    fact.raw_confidence = Decimal("0.800")
+    fact.confidence = Decimal("0.100")  # a stale derived value must not feed back in
+    evidence = EntityEvidence(
+        project_id=project,
+        entity_id=fact.id,
+        chunk_id=uuid4(),
+        source_classification=SourceClassification.DIRECT_TEXT,
+        excerpt="x",
     )
+    assert validate_entity(fact, [evidence]).confidence == Decimal("0.800")
 
 
 def test_confidence_and_duplicate_candidates_do_not_become_human_verified() -> None:

@@ -1,92 +1,151 @@
-import { useState, type ChangeEvent, type FormEvent } from "react";
-import { getPage, post, postForm } from "../api/client";
-import { StatePanel } from "./StatePanel";
+import { useRef, useState, type DragEvent } from "react";
+import { errorMessage, getPage, post } from "../api/client";
 import { useApi } from "../hooks/useApi";
+import type { useUploadQueue } from "../hooks/useUploadQueue";
+import { counts, current, type QueueItem } from "../lib/uploadQueue";
 import type { Document, DocumentVersion, Job } from "../types/api";
+import { PipelineTracker } from "./PipelineTracker";
+import { StatePanel } from "./StatePanel";
 
-interface Props {
-  projectId: string;
-}
+const ACCEPT = ".pdf,.docx,.xlsx,.csv,.md,.markdown";
 
-export function DocumentManager({ projectId }: Props) {
-  const documents = useApi(() => getPage<Document>(`/projects/${projectId}/documents`), [projectId]);
+type Uploads = ReturnType<typeof useUploadQueue>;
+
+const STATE_LABEL: Record<QueueItem["state"], string> = {
+  waiting: "Waiting",
+  uploading: "Uploading",
+  processing: "Processing",
+  done: "Done",
+  failed: "Failed",
+};
+
+export function DocumentManager({ projectId, uploads, libraryVersion }: { projectId: string; uploads: Uploads; libraryVersion: number }) {
+  const documents = useApi(() => getPage<Document>(`/projects/${projectId}/documents`), [projectId, libraryVersion]);
   const [selected, setSelected] = useState<Document>();
-  const [uploadFile, setUploadFile] = useState<File>();
-  const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [reembedding, setReembedding] = useState(false);
-  const [uploadMsg, setUploadMsg] = useState<string>();
+  const [message, setMessage] = useState<string>();
+  const input = useRef<HTMLInputElement>(null);
+
+  const mine = uploads.items.filter((item) => item.projectId === projectId);
+  const running = current(mine);
+  const lastDone = [...mine].reverse().find((item) => item.state === "done");
+  const tally = counts(mine);
 
   const versions = useApi(
     () =>
       selected
         ? getPage<DocumentVersion>(`/projects/${projectId}/documents/${selected.id}/versions`)
         : Promise.resolve({ items: [], offset: 0, limit: 50, total: 0 }),
-    [projectId, selected?.id]
+    [projectId, selected?.id, libraryVersion],
   );
 
-  function selectFile(event: ChangeEvent<HTMLInputElement>) {
-    setUploadFile(event.target.files?.[0]);
+  function pick(files: FileList | null | undefined) {
+    if (files?.length) uploads.add(projectId, Array.from(files));
+    if (input.current) input.current.value = "";
   }
 
-  async function handleUpload(e: FormEvent) {
-    e.preventDefault();
-    if (!uploadFile) return;
-    setUploading(true);
-    setUploadMsg(undefined);
-    try {
-      const form = new FormData();
-      form.append("file", uploadFile, uploadFile.name);
-      const job = await postForm<Job>(`/projects/${projectId}/documents/upload`, form);
-      setUploadMsg(`Ingestion job launched: ${job.id} (${job.state})`);
-      setUploadFile(undefined);
-      documents.refresh();
-    } catch (err) {
-      setUploadMsg(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setUploading(false);
-    }
+  function drop(event: DragEvent) {
+    event.preventDefault();
+    setDragging(false);
+    pick(event.dataTransfer.files);
   }
 
-  async function handleReembed() {
+  async function reembed() {
     setReembedding(true);
-    setUploadMsg(undefined);
+    setMessage(undefined);
     try {
       const job = await post<Job>(`/projects/${projectId}/reembed`);
-      setUploadMsg(`Re-embedding job launched: ${job.id} (${job.state})`);
-    } catch (err) {
-      setUploadMsg(err instanceof Error ? err.message : "Could not start re-embedding");
+      setMessage(`Re-embedding queued (${job.state}). Watch the Audit screen for progress.`);
+    } catch (reason) {
+      setMessage(errorMessage(reason, "Could not start re-embedding"));
     } finally {
       setReembedding(false);
     }
   }
 
-  if (documents.loading) return <StatePanel kind="loading">Loading document library…</StatePanel>;
-  if (documents.error) return <StatePanel kind="error">{documents.error.message}</StatePanel>;
-
   return (
     <div className="documents-workspace">
+      <section
+        className={`card dropzone ${dragging ? "dropzone-active" : ""}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={drop}
+      >
+        <div className="dropzone-icon" aria-hidden="true">↥</div>
+        <div className="dropzone-copy">
+          <h2>Ingest source documents</h2>
+          <p className="muted">
+            Drop one or several PDF, Word, Excel, CSV or Markdown files, or choose them. They are processed one at a time, in order;
+            the rest wait in the queue below.
+          </p>
+        </div>
+        <div className="dropzone-actions">
+          <input ref={input} type="file" accept={ACCEPT} multiple hidden onChange={(event) => pick(event.target.files)} />
+          <button type="button" onClick={() => input.current?.click()}>Add files</button>
+        </div>
+      </section>
+
+      {message && <StatePanel kind="partial">{message}</StatePanel>}
+
+      {(mine.length > 0 || running) && (
+        <section className="card">
+          <div className="queue-head">
+            <h2>Upload queue</h2>
+            <span className="muted">
+              {tally.waiting > 0 ? `${tally.waiting} waiting` : running ? "last file in progress" : "all done"}
+            </span>
+          </div>
+          <ul className="queue-list">
+            {mine.map((item, index) => (
+              <li key={item.id} className={`queue-item queue-${item.state}`}>
+                <span className="queue-index">{index + 1}</span>
+                <span className="queue-name" title={item.name}>{item.name}</span>
+                <span className="queue-state">
+                  {STATE_LABEL[item.state]}
+                  {item.state === "failed" && item.error ? ` — ${item.error}` : ""}
+                </span>
+                {item.state === "waiting" && (
+                  <button type="button" className="queue-x" aria-label={`Remove ${item.name} from the queue`} onClick={() => uploads.remove(item.id)}>×</button>
+                )}
+                {item.state === "failed" && (
+                  <button type="button" className="queue-x" aria-label="Dismiss" onClick={() => uploads.dismiss(item.id)}>×</button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="card">
+        <h2>Processing{running ? `: ${running.name}` : lastDone ? `: ${lastDone.name}` : ""}</h2>
+        <p className="muted card-sub">Each stage is checked off as soon as it completes. Nothing here is verified by the system; extracted facts wait for human review.</p>
+        <PipelineTracker projectId={projectId} jobId={running?.jobId ?? lastDone?.jobId} />
+        {!running && !lastDone && <p className="muted">Nothing is being processed right now.</p>}
+        <button type="button" className="btn-secondary btn-small" onClick={() => void reembed()} disabled={reembedding}>
+          {reembedding ? "Queuing…" : "Re-embed all passages"}
+        </button>
+      </section>
+
       <div className="split">
         <section className="card">
-          <h2>Document Library</h2>
-          {documents.data?.items.length ? (
+          <h2>Document library</h2>
+          {documents.loading && !documents.data ? (
+            <StatePanel kind="loading">Loading the library…</StatePanel>
+          ) : documents.error && !documents.data ? (
+            <StatePanel kind="error">{documents.error.message}</StatePanel>
+          ) : documents.data?.items.length ? (
             <table className="data-table">
               <thead>
-                <tr>
-                  <th>Document Name</th>
-                  <th>Format</th>
-                  <th>Uploaded By</th>
-                </tr>
+                <tr><th>Name</th><th>Format</th><th>Uploaded by</th></tr>
               </thead>
               <tbody>
                 {documents.data.items.map((doc) => (
-                  <tr
-                    key={doc.id}
-                    className={selected?.id === doc.id ? "selected-row" : ""}
-                    onClick={() => setSelected(doc)}
-                  >
-                    <td>
-                      <strong>{doc.name}</strong>
-                    </td>
+                  <tr key={doc.id} className={selected?.id === doc.id ? "selected-row" : ""} onClick={() => setSelected(doc)}>
+                    <td><strong>{doc.name}</strong></td>
                     <td><code>{doc.media_type}</code></td>
                     <td>{doc.created_by}</td>
                   </tr>
@@ -94,70 +153,38 @@ export function DocumentManager({ projectId }: Props) {
               </tbody>
             </table>
           ) : (
-            <StatePanel kind="empty">No documents uploaded yet for this project.</StatePanel>
+            <StatePanel kind="empty">No documents yet. Add files above to start.</StatePanel>
           )}
         </section>
 
         <section className="card">
-          <h2>Document Detail & Revisions</h2>
+          <h2>Versions</h2>
           {!selected ? (
-            <StatePanel kind="empty">Select a document from the library to inspect details and version history.</StatePanel>
+            <StatePanel kind="empty">Select a document to see its versions.</StatePanel>
           ) : (
             <div className="document-detail-panel">
-              <div className="doc-meta">
-                <h3>{selected.name}</h3>
-                <p>ID: <code>{selected.id}</code></p>
-                <p>Media Type: {selected.media_type}</p>
-              </div>
-              <h4>Version History</h4>
-              {versions.loading ? (
+              <h3>{selected.name}</h3>
+              {versions.loading && !versions.data ? (
                 <StatePanel kind="loading">Loading versions…</StatePanel>
-              ) : versions.error ? (
-                <StatePanel kind="error">{versions.error.message}</StatePanel>
               ) : versions.data?.items.length ? (
                 <div className="version-list">
-                  {versions.data.items.map((ver) => (
-                    <div className="version-card" key={ver.id}>
+                  {versions.data.items.map((version) => (
+                    <div className="version-card" key={version.id}>
                       <div className="ver-header">
-                        <strong>Version {ver.version_number}</strong>
-                        <span className="ver-label">{ver.source_label ?? "Initial release"}</span>
+                        <strong>Version {version.version_number}</strong>
+                        <span className="ver-label">{version.source_label ?? "Initial release"}</span>
                       </div>
-                      <div className="ver-body">
-                        <small>Checksum: <code>{ver.checksum.slice(0, 20)}…</code></small>
-                      </div>
+                      <small className="muted">Checksum <code>{version.checksum.slice(0, 16)}…</code></small>
                     </div>
                   ))}
                 </div>
               ) : (
-                <StatePanel kind="empty">No versions recorded for this document.</StatePanel>
+                <StatePanel kind="empty">No versions recorded.</StatePanel>
               )}
             </div>
           )}
         </section>
       </div>
-
-      <section className="card upload-card">
-        <h2>Ingest Source Document</h2>
-        <form onSubmit={handleUpload} className="upload-form">
-          <label>
-            Source document (PDF, DOCX, XLSX, CSV, Markdown; maximum size follows project policy)
-            <input
-              type="file"
-              accept=".pdf,.docx,.xlsx,.csv,.md,.markdown,application/pdf,text/csv,text/markdown"
-              onChange={selectFile}
-              required
-            />
-          </label>
-          {uploadFile && <p className="file-selection">Selected: {uploadFile.name}</p>}
-          <button type="submit" disabled={uploading}>
-            {uploading ? "Ingesting document..." : "Ingest Document"}
-          </button>
-        </form>
-        {uploadMsg && <StatePanel kind="partial">{uploadMsg}</StatePanel>}
-        <button type="button" onClick={handleReembed} disabled={reembedding}>
-          {reembedding ? "Re-embedding project..." : "Re-embed Project Chunks"}
-        </button>
-      </section>
     </div>
   );
 }

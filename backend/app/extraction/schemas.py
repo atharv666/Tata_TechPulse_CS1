@@ -20,6 +20,14 @@ class CandidateEntity(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     extraction_type: Literal["EXPLICIT", "INFERRED"]
     evidence: EvidenceReference
+    #: Other names the text *explicitly* says refer to this same item ("also referenced as ...").
+    aliases: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("aliases")
+    @classmethod
+    def aliases_are_short_distinct_strings(cls, value: list[str]) -> list[str]:
+        cleaned = {item.strip(): None for item in value if item.strip() and len(item) <= 512}
+        return list(cleaned)
 
 
 class CandidateRelationship(BaseModel):

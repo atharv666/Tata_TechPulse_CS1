@@ -16,7 +16,23 @@ class ProviderConfigurationError(ProviderError):
     """Raised for an incomplete or unsupported explicitly selected provider."""
 
 
-class ProviderTimeoutError(ProviderError):
+class ProviderTransientError(ProviderError):
+    """A failure that may succeed later (rate limit, 5xx, network, timeout).
+
+    The job runner reschedules work that fails with this error instead of marking it failed.
+    ``retry_after_seconds`` carries the provider's own back-off hint when one was supplied.
+    """
+
+    def __init__(self, message: str, retry_after_seconds: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class ProviderRateLimitError(ProviderTransientError):
+    """Raised when the provider keeps answering HTTP 429 after the bounded in-process retries."""
+
+
+class ProviderTimeoutError(ProviderTransientError):
     """Raised when the bounded provider request timeout is exhausted."""
 
 
@@ -62,8 +78,19 @@ class LLMProvider(ABC):
 
 
 class EmbeddingProvider(ABC):
-    """Provider-neutral batch embedding interface."""
+    """Provider-neutral batch embedding interface.
+
+    ``embed_documents`` and ``embed_query`` exist because several model families (E5, BGE, ...)
+    need a different prefix for passages and questions. Providers that do not care inherit the
+    default, which simply delegates to ``embed``.
+    """
 
     @abstractmethod
     async def embed(self, texts: list[str]) -> EmbeddingResult:
         """Return one validated vector per supplied text."""
+
+    async def embed_documents(self, texts: list[str]) -> EmbeddingResult:
+        return await self.embed(texts)
+
+    async def embed_query(self, text: str) -> EmbeddingResult:
+        return await self.embed([text])
